@@ -1,0 +1,265 @@
+#!/usr/local/bin/perl
+
+chdir "/root";
+
+use constant DESTINATION	=> "/media/done";
+use constant FIND_FILTER	=> "-type f -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.mp4' -o -iname '*.rw2' -o -iname '*.3gp' -o -iname '*.3gpp' -o -iname '*.mp4a' | grep -v thumbnails | grep -v cache";
+use constant EXIF_FILTER	=> " -CreateDate -MIMEType -Make -Model -FileModifyDate -ModifyDate -FileType -GPSDateStamp -DateTimeOriginal ";
+use constant MODIFY_DATE	=> " -CreateDate=\"?\" -FileModifyDate=\"?\" -ModifyDate=\"?\" -DateTimeOriginal=\"?\" ";
+use constant MODIFY_MAKE	=> " -Make=\"?\" -Model=\"#\" ";
+
+my %months = (
+		'Jan'=> '01',
+		'Feb'=> '02',
+		'Mar'=> '03',
+		'Apr'=> '04',
+		'May'=> '05',
+		'Jun'=> '06',
+		'Jul'=> '07',
+		'Aug'=> '08',
+		'Sep'=> '09',
+		'Oct'=> '10',
+		'Nov'=> '11',
+		'Dec'=> '12'
+		);
+
+use DBI;
+
+my $dbh = DBI->connect('dbi:SQLite:dbname=db_fotos', undef, undef, { AutoCommit => 1, PrintError => 0, RaiseError => 0});
+$dbh->do("CREATE TABLE fotos (full_path VARCHAR, md5 VARCHAR, name VARCHAR)");
+$dbh->do("CREATE TABLE models (directory VARCHAR, model VARCHAR, make VARCHAR)");
+$dbh->do("CREATE TABLE repetidas (full_path VARCHAR, md5 VARCHAR, name VARCHAR)");
+$dbh->do("CREATE UNIQUE INDEX repetidas_idx on repetidas (full_path)");
+$dbh->do("CREATE UNIQUE INDEX fotos_idx on fotos (md5)");
+$dbh->do("CREATE UNIQUE INDEX models_idx on models (directory,model,make)");
+$dbh->disconnect;
+
+defined( my $pid = fork ) or die "Can't fork: $!";
+exit if $pid;
+
+open STDOUT, '>', "log-parse-fotos";
+
+my $exiftool = "/usr/local/bin/exiftool";
+my $jhead = "/usr/local/bin/jhead";
+
+while(1){
+	$0 = "fotos scanning";
+	&find_fotos();
+	$0 = "fotos sleeping";
+	sleep(300); #Espera 5 min pra rodar de novo...
+}
+sub find_fotos(){
+	#my @locations = ("/media/process","/media/celular/*/DCIM","/media/done/FOTOS","/media/done/FOTOS_RAW","/media/done/VIDEOS","/media/done/Retrospectivas","/media/done/FOTOS_OLD","/media/done/FOTOS_RAW_OLD","/media/done/VIDEOS_OLD"); #onde estavam todas as fotos
+	my @locations = ("/media/process","/media/celular/*/DCIM");
+	my @fotos = ();
+	foreach my $location (@locations){
+		if($location eq "/media/process"){
+			print "Copia Now --> Find next ($location)\n";
+			next unless ! -f "$location/charging";
+		}
+		print "Iniciando Find $location\n";
+		open(F,"find $location ".FIND_FILTER."|");
+		my @files = <F>;
+		close(F);
+		print "Mandando Analisar ".scalar(@files)." Fotos/Movies/Etc\n";
+		&analize_and_move(@files);
+	}
+}
+
+sub analize_and_move(){
+	$0 = "fotos analize and move";
+	my @files = @_;
+	my $del_org = 0;
+
+	my $dbh = DBI->connect('dbi:SQLite:dbname=db_fotos', undef, undef, { AutoCommit => 1, PrintError => 0, RaiseError => 0});
+
+	foreach my $file (@files){
+		my %file_hash = ();
+		$file =~ tr/\r\n//d;
+		$dir_file = $file;
+		$md5sum = (split(/\s/, `/sbin/md5 -r \"$file\"`, 2))[0];
+		$mimefile = `/usr/bin/file -b --mime-type \"$file\" | awk '{printf \$1}'`;
+		my($directory, $filename) = $dir_file =~ m/(.*\/)(.*)$/;
+		my $iswhatsapp = 0;
+		my $rewrite_model = 0;
+		my $rewrite_alldate = 0;
+		$iswhatsapp = 1 if($filename =~ /-WA\d{4}/);
+		$del_org = 1 if($directory =~ /^\/media\/process/);
+
+		if($mimefile eq "inode/x-empty"){
+			print "Vazio ==> Arquivo ($file) vazio\n";
+			next;
+		}
+		my $rows = $dbh->do("INSERT INTO fotos VALUES (\"$file\" , \"$md5sum\", \"$filename\")");
+		if($dbh->errstr =~ /unique/i){
+			my $rows = $dbh->do("INSERT INTO repetidas VALUES (\"$file\" , \"$md5sum\", \"$filename\")");
+			next;
+		}
+		print "Directory: $directory\n";
+		print "ERROR ==> ".$dbh->errstr."\n" if ($dbh->errstr ne "");
+		print "FileName ==> $filename ($md5sum)\n";
+		if ($filename =~ /(199[0-9]|200[0-9]|201[0-9])[-\/](0[1-9]|1[0-2])[-\/](([0-2][1-9])|(3[0-1]))/){
+			$file_hash{"datefile"} = "$1/$2/$3";
+			$file_hash{"real_datefile"} = "$1:$2:$3 00:00:00";
+		}elsif ($filename =~ /(199[0-9]|200[0-9]|201[0-9])(0[1-9]|1[0-2])(([0-2][1-9])|(3[0-1]))/){
+			$file_hash{"datefile"} = "$1/$2/$3";
+			$file_hash{"real_datefile"} = "$1:$2:$3 00:00:00";
+		}
+		open(EX, "$exiftool -S -q ".EXIF_FILTER." \"$file\" |");
+		while (my $line = <EX>){
+			$line =~ tr/\r\n//d;
+			print "=|$line|=\n";
+			my ($k,$v) = split(/\s/, $line, 2);
+			$file_hash{"datepath"}			= $v if ($k eq "CreateDate:");
+			$file_hash{"datepathgps"}		= $v if ($k eq "GPSDateStamp:");
+			$file_hash{"datepath_fake"}		= $v if ($k eq "ModifyDate:");
+			$file_hash{"datepath_mod"}		= $v if ($k eq "FileModifyDate:");
+			$file_hash{"type"}				= $v if ($k eq "MIMEType:");
+			$file_hash{"model"}				= $v if ($k eq "Model:");
+			$file_hash{"make"}				= $v if ($k eq "Make:");
+			$file_hash{"filetype"}			= $v if ($k eq "FileType:");
+			$file_hash{"datetimeoriginal"}	= $v if ($k eq "DateTimeOriginal:");
+		}
+		close(EX);
+
+		$file_hash{"real_datepath"}			= $file_hash{"datepath"};
+		$file_hash{"real_datetimeoriginal"}	= $file_hash{"datetimeoriginal"};
+		$file_hash{"real_datepath_mod"}		= $file_hash{"datepath_mod"};
+		$file_hash{"real_datepath_fake"}	= $file_hash{"datepath_fake"};
+		$file_hash{"real_datepathgps"}		=  $file_hash{"datepathgps"};
+
+
+		if($file_hash{"model"} =~ /[,\/]+/){
+			$file_hash{"model"} = (split(/[,\/]+/,$file_hash{"model"}))[0];
+			print "Rewrite Model Split\n";
+			$rewrite_model = 1;
+		}
+
+		if($file_hash{"model"} ne "" and $file_hash{"type"} =~ /^image/){
+			my $rows = $dbh->do("INSERT INTO models VALUES (\"$directory\" , \"".$file_hash{"model"}."\",\"".$file_hash{"make"}."\")");
+		}elsif($file_hash{"model"} eq "" and $file_hash{"type"} =~ /^video/){
+			$file_hash{"model"} = $dbh->selectall_arrayref("SELECT model from models where directory = ? ", undef, ($directory))->[0][0];
+			$file_hash{"make"} = $dbh->selectall_arrayref("SELECT make from models where directory = ? ", undef, ($directory))->[0][0];
+			print "Rewrite Model from Database\n";
+			$rewrite_model = 1;
+		}
+		#correcoes nos hashes
+		$file_hash{"type"} =~ s/\//-/g;
+		$file_hash{"datepathgps"} =~ s/\:/\//g;
+		if(split(/\s/,$file_hash{"datepath"}) == 4){
+			my ($day, $month, $year) = (split(/\s/,$file_hash{"datepath"}))[0,1,2];
+			$file_hash{"datepath"} = "$year/$months{$month}/$day";
+		}else{
+			$file_hash{"datepath"} = (split(/\s/,$file_hash{"datepath"}, 2))[0];
+			$file_hash{"datepath"} =~ s/\:/\//g;
+			$file_hash{"datepath"} =~ s/\-/\//g;
+		}
+
+		if(split(/\s/,$file_hash{"datetimeoriginal"}) == 4){
+			my ($day, $month, $year) = (split(/\s/,$file_hash{"datetimeoriginal"}))[0,1,2];
+			$file_hash{"datetimeoriginal"} = "$year/$months{$month}/$day";
+		}else{
+			$file_hash{"datetimeoriginal"} = (split(/\s/,$file_hash{"datetimeoriginal"}, 2))[0];
+			$file_hash{"datetimeoriginal"} =~ s/\:/\//g;
+			$file_hash{"datetimeoriginal"} =~ s/\-/\//g;
+		}
+
+		$file_hash{"datepath_mod"} = (split(/\s/,$file_hash{"datepath_mod"}, 2))[0];
+		$file_hash{"datepath_mod"} =~ s/\:/\//g;
+		$file_hash{"datepath_mod"} =~ s/\-/\//g;
+		$file_hash{"datepath_fake"} = (split(/\s/,$file_hash{"datepath_fake"}, 2))[0];
+		$file_hash{"datepath_fake"} =~ s/\:/\//g;
+		$file_hash{"datepath_fake"} =~ s/\-/\//g;
+
+		if($file_hash{"datetimeoriginal"} ne ""){
+			if ($file_hash{"datetimeoriginal"} ne $file_hash{"datepath"}){
+				print "Rewrite Date original not empty and not equal to datepath |".$file_hash{"datetimeoriginal"}."| != |".$file_hash{"datepath"}."|\n";
+				$file_hash{"datepath"} = $file_hash{"datetimeoriginal"};
+				$file_hash{"realdate"} = $file_hash{"real_datetimeoriginal"};
+				$rewrite_alldate = 1;
+			}
+		}
+
+		if($file_hash{"datepath"} =~ /^190/ || $file_hash{"datepath"} =~ /^194/  || $file_hash{"datepath"} =~ /^0000/){
+			print "Rewrite Date datepath is wrong\n";
+			$rewrite_alldate = 1;
+			if ($file_hash{"datefile"} != $file_hash{"datepath_mod"} && $file_hash{"datefile"} ne ""){
+				$file_hash{"datepath"} = $file_hash{"datefile"};
+				$file_hash{"realdate"} = $file_hash{"real_datefile"};
+			}else{
+				$file_hash{"datepath"} = $file_hash{"datepath_mod"};
+				$file_hash{"realdate"} = $file_hash{"real_datepath_mod"};
+			}
+		}
+		if($file_hash{"datepath"} eq ""){
+			print "Rewrite Date datepath is empty\n";
+			$rewrite_alldate = 1;
+			$file_hash{"datepath"}  = "nodate";
+			if($file_hash{"datefile"} ne ""){
+				$file_hash{"datepath"} = $file_hash{"datefile"};
+				$file_hash{"realdate"} = $file_hash{"real_datefile"};
+			}elsif($file_hash{"datepathgps"} ne ""){
+				$file_hash{"datepath"}  = $file_hash{"datepathgps"};
+				$file_hash{"realdate"} = $file_hash{"real_datepathgps"};
+			}elsif($file_hash{"datepath_fake"} ne ""){
+				$file_hash{"datepath"}  = $file_hash{"datepath_fake"};
+				$file_hash{"realdate"} = $file_hash{"real_datepath_fake"};
+			}
+		}
+		if($file_hash{"type"} eq ""){
+			$file_hash{"type"} = $mimefile;
+		}
+		if($file_hash{"model"} eq ""){
+			$file_hash{"model"} = "unknow";
+		}
+		my $dir;
+		if($iswhatsapp){
+			$file_hash{"datepath"} = "WHATSAPP/".$file_hash{"datepath"};
+		}
+		if($file_hash{"type"} =~ /image-x-panasonic-rw2/){
+			$dir = "\"".DESTINATION."/FOTOS_RAW/".$file_hash{"datepath"}."/".$file_hash{"model"}."/\"";
+		}elsif($file_hash{"type"} =~ /^image/){
+			$dir = "\"".DESTINATION."/FOTOS/".$file_hash{"datepath"}."/".$file_hash{"model"}."/\"";
+		}elsif($file_hash{"type"} =~ /^video/){
+			$dir = "\"".DESTINATION."/VIDEOS/".$file_hash{"datepath"}."/".$file_hash{"model"}."/\"";
+		}else{
+			$dir = "\"".DESTINATION."/UNKNOW/".$file_hash{"datepath"}."/".$file_hash{"model"}."/\"";
+		}
+		$file = "\"$file\"";
+		foreach my $k (keys %file_hash){
+			print "$k --> $file_hash{$k}\n";
+		}
+
+		print "mkdir --> $dir\n";
+		print "copy --> $file --> $dir\n";
+		$mkok = `mkdir -p $dir`;
+		$cpok = `cp -vf $file $dir`;
+		if($del_org){
+			`rm -f $file` if ($cpok == 0);
+		}
+		$dir =~ s/"//g;
+		my $mod_date = MODIFY_DATE;
+		my $mod_make = MODIFY_MAKE;
+		$mod_date =~s/\?/$file_hash{"realdate"}/ge;
+		$mod_make =~s/\?/$file_hash{"make"}/ge;
+		$mod_make =~s/#/$file_hash{"model"}/ge;
+
+		if($rewrite_alldate && $rewrite_model && $file_hash{"realdate"} ne "" && $file_hash{"make"} ne "" && $file_hash{"model"} ne ""){
+			print "$exiftool $mod_date $mod_make \"$dir/$filename\"\n";
+			`$exiftool $mod_date $mod_make "$dir/$filename" >/dev/null 2>/dev/null`;
+		}elsif($rewrite_alldate && $file_hash{"realdate"} ne ""){
+			print "$exiftool $mod_date \"$dir/$filename\"\n";
+			`$exiftool $mod_date "$dir/$filename" >/dev/null 2>/dev/null`;
+		}elsif($rewrite_model && $file_hash{"make"} ne "" && $file_hash{"model"} ne ""){
+			print "$exiftool $mod_make \"$dir/$filename\"\n";
+			`$exiftool $mod_make "$dir/$filename" >/dev/null 2>/dev/null`;
+		}
+		print "#############################################################################################\n";
+	}
+	#acertando dono dos arquivos
+	@command = ("chmod -Rf 755 ".DESTINATION."/FOTOS_RAW/", "chmod -Rf 755 ".DESTINATION."/FOTOS/", "chmod -Rf 755 ".DESTINATION."/VIDEOS/", "chmod -Rf 755 ".DESTINATION."/UNKNOW/");
+	foreach my $cmd (@command){
+		`$cmd >/dev/null 2>/dev/null`;
+	}
+	$dbh->disconnect;
+}

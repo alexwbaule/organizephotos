@@ -1,0 +1,18 @@
+#!/bin/bash
+
+cat << EOF > /etc/rc.d/fotos
+#!/bin/sh
+#
+# PROVIDE: fotos
+
+. /etc/rc.subr
+
+name="fotos"
+rcvar="fotos_enable"
+command="/root/${name}"
+
+load_rc_config $name
+run_rc_command "$1"
+EOF
+
+echo "fotos_enable=\"YES\"" >> /etc/rc.conf
