@@ -1,5 +1,7 @@
 #!/usr/local/bin/perl
 
+# pkg install p5-Image-ExifTool jhead sqlite3 p5-DBI p5-DBD-SQLite
+
 chdir "/root";
 
 use constant DESTINATION	=> "/media/done";
