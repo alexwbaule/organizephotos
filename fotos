@@ -3,7 +3,7 @@
 chdir "/root";
 
 use constant DESTINATION	=> "/media/done";
-use constant FIND_FILTER	=> "-type f -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.mp4' -o -iname '*.rw2' -o -iname '*.3gp' -o -iname '*.3gpp' -o -iname '*.mp4a' | grep -v thumbnails | grep -v cache";
+use constant FIND_FILTER	=> "-type f -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.mp4' -o -iname '*.nef' -o -iname '*.rw2' -o -iname '*.3gp' -o -iname '*.3gpp' -o -iname '*.mp4a' | grep -v thumbnails | grep -v cache";
 use constant EXIF_FILTER	=> " -CreateDate -MIMEType -Make -Model -FileModifyDate -ModifyDate -FileType -GPSDateStamp -DateTimeOriginal ";
 use constant MODIFY_DATE	=> " -CreateDate=\"?\" -FileModifyDate=\"?\" -ModifyDate=\"?\" -DateTimeOriginal=\"?\" ";
 use constant MODIFY_MAKE	=> " -Make=\"?\" -Model=\"#\" ";
@@ -98,10 +98,10 @@ sub analize_and_move(){
 		print "Directory: $directory\n";
 		print "ERROR ==> ".$dbh->errstr."\n" if ($dbh->errstr ne "");
 		print "FileName ==> $filename ($md5sum)\n";
-		if ($filename =~ /(199[0-9]|200[0-9]|201[0-9])[-\/](0[1-9]|1[0-2])[-\/](([0-2][1-9])|(3[0-1]))/){
+		if ($filename =~ /(199[0-9]|20[0-9][0-9])[-\/](0[1-9]|1[0-2])[-\/](([0-2][1-9])|(3[0-1]))/){
 			$file_hash{"datefile"} = "$1/$2/$3";
 			$file_hash{"real_datefile"} = "$1:$2:$3 00:00:00";
-		}elsif ($filename =~ /(199[0-9]|200[0-9]|201[0-9])(0[1-9]|1[0-2])(([0-2][1-9])|(3[0-1]))/){
+		}elsif ($filename =~ /(199[0-9]|20[0-9][0-9])(0[1-9]|1[0-2])(([0-2][1-9])|(3[0-1]))/){
 			$file_hash{"datefile"} = "$1/$2/$3";
 			$file_hash{"real_datefile"} = "$1:$2:$3 00:00:00";
 		}
@@ -217,6 +217,8 @@ sub analize_and_move(){
 			$file_hash{"datepath"} = "WHATSAPP/".$file_hash{"datepath"};
 		}
 		if($file_hash{"type"} =~ /image-x-panasonic-rw2/){
+			$dir = "\"".DESTINATION."/FOTOS_RAW/".$file_hash{"datepath"}."/".$file_hash{"model"}."/\"";
+		}elsif($file_hash{"type"} =~ /x-nikon-nef/){
 			$dir = "\"".DESTINATION."/FOTOS_RAW/".$file_hash{"datepath"}."/".$file_hash{"model"}."/\"";
 		}elsif($file_hash{"type"} =~ /^image/){
 			$dir = "\"".DESTINATION."/FOTOS/".$file_hash{"datepath"}."/".$file_hash{"model"}."/\"";
