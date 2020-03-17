@@ -1,7 +1,5 @@
 #!/usr/local/bin/perl
 
-# pkg install p5-Image-ExifTool jhead sqlite3 p5-DBI p5-DBD-SQLite
-
 chdir "/root";
 
 use constant DESTINATION	=> "/media/done";
@@ -250,13 +248,13 @@ sub analize_and_move(){
 
 		if($rewrite_alldate && $rewrite_model && $file_hash{"realdate"} ne "" && $file_hash{"make"} ne "" && $file_hash{"model"} ne ""){
 			print "$exiftool $mod_date $mod_make \"$dir/$filename\"\n";
-			`$exiftool $mod_date $mod_make "$dir/$filename" >/dev/null 2>/dev/null`;
+			`$exiftool -overwrite_original_in_place -P $mod_date $mod_make "$dir/$filename" >/dev/null 2>/dev/null`;
 		}elsif($rewrite_alldate && $file_hash{"realdate"} ne ""){
 			print "$exiftool $mod_date \"$dir/$filename\"\n";
-			`$exiftool $mod_date "$dir/$filename" >/dev/null 2>/dev/null`;
+			`$exiftool -overwrite_original_in_place -P $mod_date "$dir/$filename" >/dev/null 2>/dev/null`;
 		}elsif($rewrite_model && $file_hash{"make"} ne "" && $file_hash{"model"} ne ""){
 			print "$exiftool $mod_make \"$dir/$filename\"\n";
-			`$exiftool $mod_make "$dir/$filename" >/dev/null 2>/dev/null`;
+			`$exiftool -overwrite_original_in_place -P $mod_make "$dir/$filename" >/dev/null 2>/dev/null`;
 		}
 		print "#############################################################################################\n";
 	}

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cat << EOF > /etc/rc.d/fotos
+cat << 'EOF' > /etc/rc.d/fotos
 #!/bin/sh
 #
 # PROVIDE: fotos
@@ -9,10 +9,12 @@ cat << EOF > /etc/rc.d/fotos
 
 name="fotos"
 rcvar="fotos_enable"
-command="/root/${name}"
+command="/root/organizephotos-master/${name}"
 
 load_rc_config $name
 run_rc_command "$1"
 EOF
 
 echo "fotos_enable=\"YES\"" >> /etc/rc.conf
+chmod 555 /etc/rc.d/fotos 
+
