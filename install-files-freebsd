@@ -1,0 +1,1 @@
+pkg install jhead sqlite3 p5-Image-ExifTool p5-DBI p5-DBD-SQLite
